@@ -608,7 +608,7 @@ class CommandInterface(object):
 
 # Complex commands section
 
-    def writeMemory(self, addr, data):
+    def writeMemory(self, addr, data, bls_cfg_override = None):
         lng = len(data)
         trsf_size = 248 # amount of data bytes transferred per packet (theory: max 252 + 3)
         empty_packet = bytearray((0xFF,) * trsf_size)
@@ -616,12 +616,18 @@ class CommandInterface(object):
         # Boot loader enable check
         # TODO: implement check for all chip sizes & take into account partial firmware uploads
         if (lng == 524288): #check if file is for 512K model
+            mdebug(5, "ROM Boot Loader Backdoor Configuration: %(cfg)d" % {'cfg': data[524247]}, '\n');
+            if bls_cfg_override is not None:
+                data[524247] = bls_cfg_override;
+                mdebug(5, "    overridden with: %(cfg)d" % {'cfg': data[524247]}, '\n');
             if not ((data[524247] & (1 << 4)) >> 4): #check the boot loader enable bit  (only for 512K model)
                 if not ( conf['force'] or query_yes_no("The boot loader backdoor is not enabled "\
                     "in the firmware you are about to write to the target. "\
                     "You will NOT be able to reprogram the target using this tool if you continue! "\
                     "Do you want to continue?","no") ):
                     raise Exception('Aborted by user.')
+        elif bls_cfg_override is not None:
+            raise Exception('Can not override ROM Boot Loader Backdoor Configuration')
 
         mdebug(5, "Writing %(lng)d bytes starting at address 0x%(addr)08X" %
                { 'lng': lng, 'addr': addr})
@@ -902,7 +908,7 @@ def print_version():
     print('%s %s' % (sys.argv[0], version))
 
 def usage():
-    print("""Usage: %s [-DhqVfewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--bootloader-active-high] [--bootloader-invert-lines] [file.bin]
+    print("""Usage: %s [-DhqVfewvr] [-l length] [-p port] [-b baud] [-a addr] [-i addr] [--bootloader-active-high] [--bootloader-invert-lines] [-o byte] [file.bin]
     -h, --help               This help
     -q                       Quiet
     -V                       Verbose
@@ -919,13 +925,16 @@ def usage():
     --bootloader-active-high Use active high signals to enter bootloader
     --bootloader-invert-lines Inverts the use of RTS and DTR to enter bootloader
     -D, --disable-bootloader After finishing, disable the bootloader
+    -o byte                  Override ROM Boot Loader Backdoor Configuration
+                             as described in TI CC2538TM Family of Products Guide
     --version                Print script version
 
 Examples:
     ./%s -e -w -v example/main.bin
+    ./%s -e -w -v -o 253 example/main.bin #Bootloader enabled by HIGH on PIN 6
     ./%s -e -w -v --ieee-address 00:12:4b:aa:bb:cc:dd:ee example/main.bin
 
-    """ % (sys.argv[0],sys.argv[0],sys.argv[0]))
+    """ % (sys.argv[0],sys.argv[0],sys.argv[0],sys.argv[0]))
 
 if __name__ == "__main__":
 
@@ -944,13 +953,14 @@ if __name__ == "__main__":
             'ieee_address': 0,
             'bootloader_active_high': False,
             'bootloader_invert_lines' : False,
-            'disable-bootloader': 0
+            'disable-bootloader': 0,
+            'bls_cfg_override': None
         }
 
 # http://www.python.org/doc/2.5.2/lib/module-getopt.html
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "DhqVfewvrp:b:a:l:i:", ['help', 'ieee-address=', 'disable-bootloader', 'bootloader-active-high', 'bootloader-invert-lines', 'version'])
+        opts, args = getopt.getopt(sys.argv[1:], "DhqVfewvrp:b:a:l:i:o:", ['help', 'ieee-address=', 'disable-bootloader', 'bootloader-active-high', 'bootloader-invert-lines', 'version'])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(str(err)) # will print something like "option -a not recognized"
@@ -992,6 +1002,8 @@ if __name__ == "__main__":
             conf['bootloader_invert_lines'] = True
         elif o == '-D' or o == '--disable-bootloader':
             conf['disable-bootloader'] = 1
+        elif o == '-o':
+            conf['bls_cfg_override'] = eval(a)
         elif o == '--version':
             print_version()
             sys.exit(0)
@@ -1090,7 +1102,7 @@ if __name__ == "__main__":
 
         if conf['write']:
             # TODO: check if boot loader back-door is open, need to read flash size first to get address
-            if cmd.writeMemory(conf['address'], firmware.bytes):
+            if cmd.writeMemory(conf['address'], firmware.bytes, conf['bls_cfg_override']):
                 mdebug(5, "    Write done                                ")
             else:
                 raise CmdException("Write failed                       ")
